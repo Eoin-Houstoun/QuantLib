@@ -29,6 +29,7 @@ need cmake "cmake 3.15 or newer"
 need c++ "a C++17 compiler (apt install build-essential)"
 need rsync "apt install rsync"
 need python3 "the gate and benchmark are Python 3 scripts (standard library only)"
+need bwrap "bubblewrap sandboxes the build and the runs (apt install bubblewrap)"
 [ -f /usr/include/boost/version.hpp ] || [ -n "${BOOST_ROOT:-}" ] || {
     echo "setup.sh: Boost headers not found (apt install libboost-dev, or set BOOST_ROOT)" >&2
     exit 1
@@ -52,12 +53,19 @@ sync_sources() {
         "$ROOT/" "$BENCH_DIR/work/src/"
 }
 
+# The version's code is compiled (and CMake run) in a sandbox where only work/ is writable,
+# with no network: it can't reach trusted/, pristine/ or anything else under $HOME.
+sandbox() {
+    bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --bind "$BENCH_DIR/work" "$BENCH_DIR/work" \
+        --unshare-net --die-with-parent --chdir "$BENCH_DIR/work" "$@"
+}
+
 build() {
-    cmake --build "$BENCH_DIR/work/build" --target ql_library ql_test_suite -j "$JOBS"
+    sandbox cmake --build "$BENCH_DIR/work/build" --target ql_library ql_test_suite -j "$JOBS"
     lib=$(find "$BENCH_DIR/work/build/ql" -maxdepth 1 -name 'libQuantLib.so*' -type f | head -1)
     [ -n "$lib" ] || { echo "setup.sh: libQuantLib.so not found after the build" >&2; exit 1; }
     # The driver comes from the trusted copy, never from the version's checkout.
-    c++ -O2 -std=c++17 -I "$BENCH_DIR/work/src" -I "$BENCH_DIR/work/build" \
+    sandbox c++ -O2 -std=c++17 -I "$BENCH_DIR/work/src" -I "$BENCH_DIR/work/build" \
         "$TRUSTED/driver.cpp" -L "$BENCH_DIR/work/build/ql" -lQuantLib \
         -Wl,-rpath,"$BENCH_DIR/work/build/ql" -o "$BENCH_DIR/work/build/heston_driver"
     # What was built, for gate.py and bench.py to check against the checkout they run in.
@@ -75,7 +83,8 @@ if [ "${1:-}" = "--seed" ]; then
     cp -a "$ROOT/artemis_bench/." "$TRUSTED/"
     mkdir -p "$BENCH_DIR/work/src"
     sync_sources
-    cmake -S "$BENCH_DIR/work/src" -B "$BENCH_DIR/work/build" -DCMAKE_BUILD_TYPE=Release \
+    mkdir -p "$BENCH_DIR/work/build"
+    sandbox cmake -S "$BENCH_DIR/work/src" -B "$BENCH_DIR/work/build" -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=ON -DQL_BUILD_EXAMPLES=OFF -DQL_BUILD_TEST_SUITE=ON \
         -DQL_BUILD_FUZZ_TEST_SUITE=OFF -DCMAKE_CXX_STANDARD=17
     build

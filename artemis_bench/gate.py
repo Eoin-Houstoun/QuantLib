@@ -71,7 +71,7 @@ def main():
     if fails:
         print("gate: failed (%d)" % len(fails))
         return 1
-    t = subprocess.run([h.TEST_SUITE, "--run_test=QuantLibTests/HestonModelTests",
+    t = subprocess.run(h.SANDBOX + [h.TEST_SUITE, "--run_test=QuantLibTests/HestonModelTests",
                         "--log_level=nothing", "--report_level=short"],
                        capture_output=True, text=True, timeout=3600,
                        preexec_fn=h.limit_worker_memory, cwd=h.WORK)

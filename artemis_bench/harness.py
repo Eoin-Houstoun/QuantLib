@@ -25,6 +25,10 @@ TEST_SUITE = os.path.join(WORK, "build", "test-suite", "quantlib-test-suite")
 GOLDEN = os.path.join(HERE, "golden")
 HARNESS = ("bench.py", "gate.py", "harness.py", "driver.cpp", "setup.sh")
 WORKER_MEMORY = 4 << 30
+# Every driver and test-suite run is sandboxed: the whole filesystem read-only (trusted/,
+# pristine/, the golden data and the build included), a private /tmp, and no network.
+SANDBOX = ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+           "--tmpfs", "/tmp", "--unshare-net", "--die-with-parent", "--chdir", WORK]
 
 
 def tree_hash(paths, base=None):
@@ -101,7 +105,7 @@ def cpu_seconds(pid):
 
 def run_untimed(mode, timeout=1800):
     """Run a driver mode with no handshake and return its JSON output."""
-    r = subprocess.run([DRIVER, mode], capture_output=True, text=True, timeout=timeout,
+    r = subprocess.run(SANDBOX + [DRIVER, mode], capture_output=True, text=True, timeout=timeout,
                        preexec_fn=limit_worker_memory, cwd=WORK)
     if r.returncode != 0:
         sys.exit("harness: driver %s exited %d: %s" % (mode, r.returncode, r.stderr[-500:]))
@@ -149,11 +153,12 @@ def run_handshake(mode, timeout=1800):
 
     The headline clock runs from spawn to "ARTEMIS_DONE <nonce>", so work moved into
     start-up counts; CPU over wall is the larger of the whole lifetime (rusage, reaped
-    children included) and the timed call when it is long enough to judge (>0.5 s)."""
+    children included: the driver runs as bwrap's child) and the timed call when it is long
+    enough to judge (>0.5 s)."""
     import secrets
     import time
     spawn = time.perf_counter()
-    p = subprocess.Popen([DRIVER, mode], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+    p = subprocess.Popen(SANDBOX + [DRIVER, mode], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                          stderr=subprocess.PIPE, text=True, bufsize=1, cwd=WORK,
                          preexec_fn=limit_worker_memory)
     for line in p.stdout:
