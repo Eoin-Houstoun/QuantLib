@@ -27,10 +27,11 @@ HARNESS = ("bench.py", "gate.py", "harness.py", "driver.cpp", "setup.sh")
 WORKER_MEMORY = 4 << 30
 # Every driver and test-suite run is sandboxed: everything read-only, $HOME and /run hidden
 # except the build, a private /tmp, no network, and its own PID/IPC/user namespaces.
-SANDBOX = ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
+# env -i, not --clearenv: bubblewrap 0.4 (Ubuntu 20.04) has no --clearenv.
+SANDBOX = ["env", "-i", "PATH=/usr/local/bin:/usr/bin:/bin", "bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
            "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", os.path.expanduser("~"),
            "--ro-bind", WORK, WORK, "--unshare-all", "--new-session", "--die-with-parent",
-           "--cap-drop", "ALL", "--clearenv", "--setenv", "PATH", "/usr/local/bin:/usr/bin:/bin",
+           "--cap-drop", "ALL", "--setenv", "PATH", "/usr/local/bin:/usr/bin:/bin",
            "--setenv", "HOME", WORK, "--chdir", WORK]
 
 

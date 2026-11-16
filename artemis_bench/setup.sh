@@ -66,9 +66,11 @@ sync_sources() {
 # can't reach trusted/, pristine/, host sockets or other processes. System cmake and compiler only.
 sandbox() {
     if [ -d "$TOOLS" ]; then set -- --ro-bind "$TOOLS" "$TOOLS" "$@"; fi
-    bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run --tmpfs "$HOME" \
+    # env -i, not --clearenv: bubblewrap 0.4 (Ubuntu 20.04) has no --clearenv.
+    env -i PATH=/usr/local/bin:/usr/bin:/bin bwrap --ro-bind / / --dev /dev --proc /proc \
+        --tmpfs /tmp --tmpfs /run --tmpfs "$HOME" \
         --bind "$BENCH_DIR/work" "$BENCH_DIR/work" --unshare-all --new-session --die-with-parent \
-        --cap-drop ALL --clearenv --setenv PATH "$TOOLS/cmake/bin:/usr/local/bin:/usr/bin:/bin" \
+        --cap-drop ALL --setenv PATH "$TOOLS/cmake/bin:/usr/local/bin:/usr/bin:/bin" \
         --setenv HOME "$BENCH_DIR/work" --chdir "$BENCH_DIR/work" "$@"
 }
 
