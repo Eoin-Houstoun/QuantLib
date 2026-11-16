@@ -25,10 +25,13 @@ TEST_SUITE = os.path.join(WORK, "build", "test-suite", "quantlib-test-suite")
 GOLDEN = os.path.join(HERE, "golden")
 HARNESS = ("bench.py", "gate.py", "harness.py", "driver.cpp", "setup.sh")
 WORKER_MEMORY = 4 << 30
-# Every driver and test-suite run is sandboxed: the whole filesystem read-only (trusted/,
-# pristine/, the golden data and the build included), a private /tmp, and no network.
+# Every driver and test-suite run is sandboxed: everything read-only, $HOME and /run hidden
+# except the build, a private /tmp, no network, and its own PID/IPC/user namespaces.
 SANDBOX = ["bwrap", "--ro-bind", "/", "/", "--dev", "/dev", "--proc", "/proc",
-           "--tmpfs", "/tmp", "--unshare-net", "--die-with-parent", "--chdir", WORK]
+           "--tmpfs", "/tmp", "--tmpfs", "/run", "--tmpfs", os.path.expanduser("~"),
+           "--ro-bind", WORK, WORK, "--unshare-all", "--new-session", "--die-with-parent",
+           "--cap-drop", "ALL", "--clearenv", "--setenv", "PATH", "/usr/local/bin:/usr/bin:/bin",
+           "--setenv", "HOME", WORK, "--chdir", WORK]
 
 
 def tree_hash(paths, base=None):
@@ -59,14 +62,36 @@ def source_hash():
     return h.hexdigest()
 
 
+def file_hash(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def built_binaries():
+    lib_dir = os.path.join(WORK, "build", "ql")
+    libs = sorted(f for f in os.listdir(lib_dir) if f.startswith("libQuantLib.so"))
+    return [DRIVER, TEST_SUITE] + [os.path.join(lib_dir, f) for f in libs]
+
+
+def build_stamp():
+    """The checkout's sources plus a hash of each binary built from them."""
+    return " ".join([source_hash()] + [file_hash(p) for p in built_binaries()
+                                      if os.path.isfile(p) and not os.path.islink(p)])
+
+
 def check_build():
     try:
         with open(os.path.join(WORK, "built-from")) as fh:
             built = fh.read().strip()
     except FileNotFoundError:
         sys.exit("harness: no build in %s; run the trusted setup.sh first" % WORK)
-    if built != source_hash():
+    if built.split(" ")[0] != source_hash():
         sys.exit("harness: the build is not of this checkout; run the trusted setup.sh")
+    if built != build_stamp():
+        sys.exit("harness: the driver, test suite or library changed since they were built")
     if not os.access(DRIVER, os.X_OK):
         sys.exit("harness: %s missing" % DRIVER)
 
@@ -97,10 +122,21 @@ def limit_worker_memory():
 
 
 def cpu_seconds(pid):
-    """utime+stime of the process and its reaped children, all threads (/proc/<pid>/stat)."""
-    with open("/proc/%d/stat" % pid) as fh:
-        fields = fh.read().rsplit(")", 1)[1].split()
-    return sum(int(x) for x in fields[11:15]) / os.sysconf("SC_CLK_TCK")
+    """utime+stime of the whole process tree under pid (the driver runs under bwrap), all
+    threads, plus the children each has reaped."""
+    total, stack = 0, [pid]
+    while stack:
+        p = stack.pop()
+        try:
+            with open("/proc/%d/stat" % p) as fh:
+                fields = fh.read().rsplit(")", 1)[1].split()
+            total += sum(int(x) for x in fields[11:15])
+            for tid in os.listdir("/proc/%d/task" % p):
+                with open("/proc/%d/task/%s/children" % (p, tid)) as fh:
+                    stack += [int(c) for c in fh.read().split()]
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+    return total / os.sysconf("SC_CLK_TCK")
 
 
 def run_untimed(mode, timeout=1800):
@@ -153,8 +189,8 @@ def run_handshake(mode, timeout=1800):
 
     The headline clock runs from spawn to "ARTEMIS_DONE <nonce>", so work moved into
     start-up counts; CPU over wall is the larger of the whole lifetime (rusage, reaped
-    children included: the driver runs as bwrap's child) and the timed call when it is long
-    enough to judge (>0.5 s)."""
+    children included) and the timed call over the whole process tree under bwrap, when
+    the call is long enough to judge (>0.5 s)."""
     import secrets
     import time
     spawn = time.perf_counter()

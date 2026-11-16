@@ -54,10 +54,13 @@ sync_sources() {
 }
 
 # The version's code is compiled (and CMake run) in a sandbox where only work/ is writable,
-# with no network: it can't reach trusted/, pristine/ or anything else under $HOME.
+# with no network, its own PID/IPC/user namespaces, /run and the rest of $HOME hidden: it
+# can't reach trusted/, pristine/, host sockets or other processes. System cmake and compiler only.
 sandbox() {
-    bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --bind "$BENCH_DIR/work" "$BENCH_DIR/work" \
-        --unshare-net --die-with-parent --chdir "$BENCH_DIR/work" "$@"
+    bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run --tmpfs "$HOME" \
+        --bind "$BENCH_DIR/work" "$BENCH_DIR/work" --unshare-all --new-session --die-with-parent \
+        --cap-drop ALL --clearenv --setenv PATH /usr/local/bin:/usr/bin:/bin \
+        --setenv HOME "$BENCH_DIR/work" --chdir "$BENCH_DIR/work" "$@"
 }
 
 build() {
@@ -69,7 +72,7 @@ build() {
         "$TRUSTED/driver.cpp" -L "$BENCH_DIR/work/build/ql" -lQuantLib \
         -Wl,-rpath,"$BENCH_DIR/work/build/ql" -o "$BENCH_DIR/work/build/heston_driver"
     # What was built, for gate.py and bench.py to check against the checkout they run in.
-    python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import harness; print(harness.source_hash())" \
+    python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import harness; print(harness.build_stamp())" \
         "$TRUSTED" > "$BENCH_DIR/work/built-from"
 }
 
