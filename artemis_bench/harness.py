@@ -216,8 +216,10 @@ def run_handshake(mode, timeout=1800):
     rest = p.stdout.read()
     _, status, ru = os.wait4(p.pid, 0)
     life = time.perf_counter() - spawn
-    if os.waitstatus_to_exitcode(status) != 0:
-        sys.exit("harness: driver %s exited %d" % (mode, os.waitstatus_to_exitcode(status)))
+    # Python 3.8 has no os.waitstatus_to_exitcode.
+    code = os.WEXITSTATUS(status) if os.WIFEXITED(status) else -os.WTERMSIG(status)
+    if code != 0:
+        sys.exit("harness: driver %s exited %d" % (mode, code))
     ratio = (ru.ru_utime + ru.ru_stime) / life
     if t1 - t0 > 0.5:
         ratio = max(ratio, (c1 - c0) / (t1 - t0))

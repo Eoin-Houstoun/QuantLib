@@ -23,6 +23,14 @@ BENCH_DIR="${QL_BENCH_DIR:-$HOME/.cache/artemis-ql-heston}"
 JOBS="${QL_BENCH_JOBS:-6}"
 ROOT=$(pwd)
 TRUSTED="$BENCH_DIR/trusted"
+# Optional tools a person installs where the system has none: tools/cmake (a CMake
+# release) and tools/boost/include (Boost headers). The sandbox hides $HOME, so they are
+# bound into it read-only; a version can't write them.
+TOOLS="$BENCH_DIR/tools"
+[ -x "$TOOLS/cmake/bin/cmake" ] && PATH="$TOOLS/cmake/bin:$PATH"
+[ -z "${BOOST_ROOT:-}" ] && [ -f "$TOOLS/boost/include/boost/version.hpp" ] && BOOST_ROOT="$TOOLS/boost"
+BOOST_FLAGS=""
+[ -n "${BOOST_ROOT:-}" ] && BOOST_FLAGS="-I$BOOST_ROOT/include"
 
 need() { command -v "$1" >/dev/null 2>&1 || { echo "setup.sh: $1 not found ($2)" >&2; exit 1; }; }
 need cmake "cmake 3.15 or newer"
@@ -57,9 +65,10 @@ sync_sources() {
 # with no network, its own PID/IPC/user namespaces, /run and the rest of $HOME hidden: it
 # can't reach trusted/, pristine/, host sockets or other processes. System cmake and compiler only.
 sandbox() {
+    if [ -d "$TOOLS" ]; then set -- --ro-bind "$TOOLS" "$TOOLS" "$@"; fi
     bwrap --ro-bind / / --dev /dev --proc /proc --tmpfs /tmp --tmpfs /run --tmpfs "$HOME" \
         --bind "$BENCH_DIR/work" "$BENCH_DIR/work" --unshare-all --new-session --die-with-parent \
-        --cap-drop ALL --clearenv --setenv PATH /usr/local/bin:/usr/bin:/bin \
+        --cap-drop ALL --clearenv --setenv PATH "$TOOLS/cmake/bin:/usr/local/bin:/usr/bin:/bin" \
         --setenv HOME "$BENCH_DIR/work" --chdir "$BENCH_DIR/work" "$@"
 }
 
@@ -68,7 +77,7 @@ build() {
     lib=$(find "$BENCH_DIR/work/build/ql" -maxdepth 1 -name 'libQuantLib.so*' -type f | head -1)
     [ -n "$lib" ] || { echo "setup.sh: libQuantLib.so not found after the build" >&2; exit 1; }
     # The driver comes from the trusted copy, never from the version's checkout.
-    sandbox c++ -O2 -std=c++17 -I "$BENCH_DIR/work/src" -I "$BENCH_DIR/work/build" \
+    sandbox c++ -O2 -std=c++17 $BOOST_FLAGS -I "$BENCH_DIR/work/src" -I "$BENCH_DIR/work/build" \
         "$TRUSTED/driver.cpp" -L "$BENCH_DIR/work/build/ql" -lQuantLib \
         -Wl,-rpath,"$BENCH_DIR/work/build/ql" -o "$BENCH_DIR/work/build/heston_driver"
     # What was built, for gate.py and bench.py to check against the checkout they run in.
@@ -89,7 +98,7 @@ if [ "${1:-}" = "--seed" ]; then
     mkdir -p "$BENCH_DIR/work/build"
     sandbox cmake -S "$BENCH_DIR/work/src" -B "$BENCH_DIR/work/build" -DCMAKE_BUILD_TYPE=Release \
         -DBUILD_SHARED_LIBS=ON -DQL_BUILD_EXAMPLES=OFF -DQL_BUILD_TEST_SUITE=ON \
-        -DQL_BUILD_FUZZ_TEST_SUITE=OFF -DCMAKE_CXX_STANDARD=17
+        -DQL_BUILD_FUZZ_TEST_SUITE=OFF -DCMAKE_CXX_STANDARD=17 ${BOOST_ROOT:+-DBOOST_ROOT="$BOOST_ROOT"}
     build
     # Golden outputs from the seed, written into the trusted copy before it is locked.
     python3 -I "$TRUSTED/gate.py" --record
