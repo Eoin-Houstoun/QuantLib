@@ -10,7 +10,7 @@
                              through the default engine (no instrument caching), then JSON
                              {"checksum": ...}
      heston_driver grid      untimed; JSON {"prices": [...]} for the stress grid, default engine
-     heston_driver reference untimed; the same grid with adaptive Gauss-Lobatto at 1e-12
+     heston_driver reference untimed; the same grid with adaptive Gauss-Lobatto at 1e-12 relative, 1e-14 absolute
 
    The market and the start point match the 16 Nov profiling script (heston.py): spot 100,
    r 3%, q 1%, true model v0 0.04, kappa 1.5, theta 0.05, sigma 0.6, rho -0.7; quotes are the
@@ -216,7 +216,12 @@ int main(int argc, char* argv[]) {
             std::printf("}\n");
         } else if (mode == "reference") {
             auto prices = stressPrices(m, [](const ext::shared_ptr<HestonModel>& model) {
-                return ext::make_shared<AnalyticHestonEngine>(model, 1e-12, 100000);
+                // Relative 1e-12 alone never converges on deep out-of-the-money prices
+                // near zero, so an absolute floor of 1e-14 (100x under the gate's 1e-12).
+                return ext::make_shared<AnalyticHestonEngine>(
+                    model, AnalyticHestonEngine::OptimalCV,
+                    AnalyticHestonEngine::Integration::gaussLobatto(1e-12, 1e-14, 1000000),
+                    1e-40);
             });
             std::printf("{");
             printArray("prices", prices, true);

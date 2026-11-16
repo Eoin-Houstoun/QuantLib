@@ -11,7 +11,7 @@ Tiers, reported so a run shows which versions could merge upstream:
   tier 0  every price bit-identical to the seed
   tier 1  within 1e-14 absolute
   tier 2  within 1e-12 absolute and 1e-10 relative
-Beyond tier 2 fails. No price may be further from an adaptive Gauss-Lobatto 1e-12
+Beyond tier 2 fails. No price may be further from an adaptive Gauss-Lobatto (1e-12 relative, 1e-14 absolute)
 reference than the seed's was (plus 1e-12). The calibration must land on the seed's
 parameters within 1e-8 (relative, or absolute below 1) and fit no worse. Then
 QuantLib's own HestonModelTests must pass.
@@ -27,7 +27,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import harness as h  # noqa: E402
 
 # source_hash() of the seed: QuantLib 27196d2 ql/ plus driver.cpp; --record refuses anything else.
-SEED_SOURCE_HASH = "d88165c6234f44764c8e1916248bcee72def97b9476bd7810a46dbfea87e0337"
+SEED_SOURCE_HASH = "fbcee2f4f98b5fa1d9f058e1b4a794c49d338a3d35983648b4f2c49a736d1b4a"
 
 
 def main():
