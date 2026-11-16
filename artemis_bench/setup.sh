@@ -78,9 +78,11 @@ build() {
     sandbox cmake --build "$BENCH_DIR/work/build" --target ql_library ql_test_suite -j "$JOBS"
     lib=$(find "$BENCH_DIR/work/build/ql" -maxdepth 1 -name 'libQuantLib.so*' -type f | head -1)
     [ -n "$lib" ] || { echo "setup.sh: libQuantLib.so not found after the build" >&2; exit 1; }
-    # The driver comes from the trusted copy, never from the version's checkout.
-    sandbox c++ -O2 -std=c++17 $BOOST_FLAGS -I "$BENCH_DIR/work/src" -I "$BENCH_DIR/work/build" \
-        "$TRUSTED/driver.cpp" -L "$BENCH_DIR/work/build/ql" -lQuantLib \
+    # The driver comes from the trusted copy, never from the version's checkout. The sandbox
+    # hides $HOME, so only that one file is bound in, read-only (not trusted/'s golden data).
+    sandbox --ro-bind "$TRUSTED/driver.cpp" /tmp/heston_driver.cpp \
+        c++ -O2 -std=c++17 $BOOST_FLAGS -I "$BENCH_DIR/work/src" -I "$BENCH_DIR/work/build" \
+        /tmp/heston_driver.cpp -L "$BENCH_DIR/work/build/ql" -lQuantLib \
         -Wl,-rpath,"$BENCH_DIR/work/build/ql" -o "$BENCH_DIR/work/build/heston_driver"
     # What was built, for gate.py and bench.py to check against the checkout they run in.
     python3 -I -c "import sys; sys.path.insert(0, sys.argv[1]); import harness; print(harness.build_stamp())" \
