@@ -1,12 +1,13 @@
 """Shared helpers for gate.py and bench.py. Standard library only; never links QuantLib.
 
-The driver is built by setup.sh into a cached build folder outside the checkout
-(QL_BENCH_DIR, default ~/.cache/artemis-ql-heston), because a runner checks out
-every version fresh and a full QuantLib build takes most of an hour. setup.sh
-syncs the checkout into that folder with rsync --checksum, so unchanged files
-keep their timestamps and only edited files recompile, then records a hash of
-the sources it built. Every parent checks that hash against this checkout before
-trusting the driver.
+The Script runs these from the trusted copy in QL_BENCH_DIR/trusted (made by
+`setup.sh --seed`), with the current directory at the version's checkout. So HERE is
+the trusted harness and ROOT is the code under test; a version can't edit what judges it,
+and any edit it makes to its own artemis_bench/ fails the gate.
+
+setup.sh builds each version in QL_BENCH_DIR/work, a fresh copy of the pristine seed build
+with only the version's changed files recompiled, and records a hash of the sources it
+built; every parent checks that hash against the checkout before trusting the driver.
 """
 import hashlib
 import json
@@ -16,55 +17,74 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-ROOT = os.path.dirname(HERE)
+ROOT = os.getcwd()
 BENCH_DIR = os.environ.get("QL_BENCH_DIR") or os.path.expanduser("~/.cache/artemis-ql-heston")
-DRIVER = os.path.join(BENCH_DIR, "build", "heston_driver")
-TEST_SUITE = os.path.join(BENCH_DIR, "build", "test-suite", "quantlib-test-suite")
+WORK = os.path.join(BENCH_DIR, "work")
+DRIVER = os.path.join(WORK, "build", "heston_driver")
+TEST_SUITE = os.path.join(WORK, "build", "test-suite", "quantlib-test-suite")
 GOLDEN = os.path.join(HERE, "golden")
 HARNESS = ("bench.py", "gate.py", "harness.py", "driver.cpp", "setup.sh")
 WORKER_MEMORY = 4 << 30
 
 
-def tree_hash(paths):
+def tree_hash(paths, base=None):
     """sha256 over the relative path and bytes of every file under the given roots."""
+    base = base or ROOT
     h = hashlib.sha256()
     files = []
     for p in paths:
-        full = os.path.join(ROOT, p)
+        full = os.path.join(base, p)
         if os.path.isfile(full):
             files.append(full)
         for d, dirs, names in os.walk(full):
             dirs[:] = sorted(x for x in dirs if x != "__pycache__")
             files += [os.path.join(d, n) for n in names]
     for f in sorted(files):
-        h.update(os.path.relpath(f, ROOT).encode())
+        h.update(os.path.relpath(f, base).encode())
         with open(f, "rb") as fh:
             h.update(fh.read())
     return h.hexdigest()
 
 
 def source_hash():
-    """What setup.sh must have built: the library sources plus the driver."""
-    return tree_hash(["ql", os.path.join("artemis_bench", "driver.cpp")])
+    """What setup.sh must have built: the checkout's library sources plus the trusted driver."""
+    h = hashlib.sha256()
+    h.update(tree_hash(["ql"]).encode())
+    with open(os.path.join(HERE, "driver.cpp"), "rb") as fh:
+        h.update(fh.read())
+    return h.hexdigest()
 
 
 def check_build():
-    stamp = os.path.join(BENCH_DIR, "built-from")
     try:
-        with open(stamp) as fh:
+        with open(os.path.join(WORK, "built-from")) as fh:
             built = fh.read().strip()
     except FileNotFoundError:
-        sys.exit("harness: no build in %s; run artemis_bench/setup.sh first" % BENCH_DIR)
+        sys.exit("harness: no build in %s; run the trusted setup.sh first" % WORK)
     if built != source_hash():
-        sys.exit("harness: the cached build is not of this checkout; run artemis_bench/setup.sh")
+        sys.exit("harness: the build is not of this checkout; run the trusted setup.sh")
     if not os.access(DRIVER, os.X_OK):
         sys.exit("harness: %s missing" % DRIVER)
 
 
 def harness_digest():
-    """One hash over the harness scripts and every golden file."""
-    return tree_hash([os.path.join("artemis_bench", f) for f in HARNESS] +
-                     [os.path.join("artemis_bench", "golden")])
+    """One hash over the trusted harness scripts and every golden file."""
+    return tree_hash(list(HARNESS) + ["golden"], base=HERE)
+
+
+def checkout_harness_unchanged():
+    """The version's own artemis_bench/ must match the trusted copy it was made from."""
+    for f in HARNESS:
+        mine, trusted = os.path.join(ROOT, "artemis_bench", f), os.path.join(HERE, f)
+        with open(trusted, "rb") as a:
+            want = a.read()
+        try:
+            with open(mine, "rb") as b:
+                if b.read() != want:
+                    return False
+        except FileNotFoundError:
+            return False
+    return True
 
 
 def limit_worker_memory():
@@ -82,7 +102,7 @@ def cpu_seconds(pid):
 def run_untimed(mode, timeout=1800):
     """Run a driver mode with no handshake and return its JSON output."""
     r = subprocess.run([DRIVER, mode], capture_output=True, text=True, timeout=timeout,
-                       preexec_fn=limit_worker_memory, cwd=BENCH_DIR)
+                       preexec_fn=limit_worker_memory, cwd=WORK)
     if r.returncode != 0:
         sys.exit("harness: driver %s exited %d: %s" % (mode, r.returncode, r.stderr[-500:]))
     return json.loads(r.stdout.strip().splitlines()[-1])
@@ -134,7 +154,7 @@ def run_handshake(mode, timeout=1800):
     import time
     spawn = time.perf_counter()
     p = subprocess.Popen([DRIVER, mode], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                         stderr=subprocess.PIPE, text=True, bufsize=1, cwd=BENCH_DIR,
+                         stderr=subprocess.PIPE, text=True, bufsize=1, cwd=WORK,
                          preexec_fn=limit_worker_memory)
     for line in p.stdout:
         if line.strip() == "ARTEMIS_READY":

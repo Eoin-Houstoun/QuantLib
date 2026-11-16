@@ -1,7 +1,7 @@
 """Correctness gate for the Heston calibration benchmark (Artemis test command).
 
-    python3 artemis_bench/gate.py            # check this checkout against golden
-    python3 artemis_bench/gate.py --record   # write golden (seed sources only)
+    python3 $QL_BENCH_DIR/trusted/gate.py    # from the checkout root: check it against golden
+    python3 artemis_bench/gate.py --record   # once, before setup.sh --seed: write golden
 
 Stress grid: 5 Heston regimes (incl. sigma 1.5 with rho -0.95, very low variance, a
 Feller-violating case, positive rho) x 6 maturities (1 week to 10 years) x 7 strikes
@@ -27,12 +27,16 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import harness as h  # noqa: E402
 
 # source_hash() of the seed: QuantLib 27196d2 ql/ plus driver.cpp; --record refuses anything else.
-SEED_SOURCE_HASH = "7a39ab5024cfe4b03df3416af0bad3a02dc528ffe61728177c0d0d5396fc1d38"
+SEED_SOURCE_HASH = "d88165c6234f44764c8e1916248bcee72def97b9476bd7810a46dbfea87e0337"
 
 
 def main():
     record = "--record" in sys.argv
     h.check_build()
+    if not record and not h.checkout_harness_unchanged():
+        print("FAIL the version edited artemis_bench/, which it must not touch", file=sys.stderr)
+        print("gate: failed (harness edited)")
+        return 1
     digest = h.harness_digest()
     grid = h.run_untimed("grid")["prices"]
     _, _, _, calib = h.run_handshake("calib")
@@ -70,7 +74,7 @@ def main():
     t = subprocess.run([h.TEST_SUITE, "--run_test=QuantLibTests/HestonModelTests",
                         "--log_level=nothing", "--report_level=short"],
                        capture_output=True, text=True, timeout=3600,
-                       preexec_fn=h.limit_worker_memory, cwd=h.BENCH_DIR)
+                       preexec_fn=h.limit_worker_memory, cwd=h.WORK)
     print("HestonModelTests:", (t.stdout + t.stderr).strip().splitlines()[-1:] or ["no output"])
     if t.returncode != 0:
         print("gate: failed (QuantLib HestonModelTests)")

@@ -3,7 +3,8 @@
     python3 artemis_bench/prove_gate.py
 
 Patches ql/pricingengines/vanilla/analytichestonengine.cpp in place one fault at a time,
-rebuilds through setup.sh (incremental: one file and a relink), runs gate.py, and restores
+rebuilds through the trusted setup.sh (a fresh copy of the seed build, one file
+recompiled), runs the trusted gate.py, and restores
 the original bytes afterwards (also on error), rebuilding the seed at the end.
 """
 import os
@@ -38,16 +39,20 @@ PROBES = {
 }
 
 
+BENCH_DIR = os.environ.get("QL_BENCH_DIR") or os.path.expanduser("~/.cache/artemis-ql-heston")
+TRUSTED = os.path.join(BENCH_DIR, "trusted")
+
+
 def sh(*cmd):
     r = subprocess.run(cmd, cwd=ROOT, capture_output=True, text=True)
     return r.returncode, (r.stdout + r.stderr).strip().splitlines()
 
 
 def build_and_gate():
-    rc, out = sh("sh", os.path.join(HERE, "setup.sh"))
+    rc, out = sh("sh", os.path.join(TRUSTED, "setup.sh"))
     if rc != 0:
         return rc, ["build failed: " + (out[-1] if out else "")]
-    return sh(sys.executable, "-I", os.path.join(HERE, "gate.py"))
+    return sh(sys.executable, "-I", os.path.join(TRUSTED, "gate.py"))
 
 
 def main():
@@ -74,7 +79,7 @@ def main():
     finally:
         with open(ENGINE, "w") as fh:
             fh.write(seed)
-        sh("sh", os.path.join(HERE, "setup.sh"))
+        sh("sh", os.path.join(TRUSTED, "setup.sh"))
     print("ALL AS EXPECTED" if ok else "SOMETHING UNEXPECTED")
     return 0 if ok else 1
 
